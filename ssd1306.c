@@ -34,7 +34,7 @@ SOFTWARE.
 #include "font.h"
 
 // Use initialization values from adafruit library
-#define USE_ADAFRUIT_CFG
+// #define USE_ADAFRUIT_CFG
 
 inline static void swap(int32_t *a, int32_t *b) {
     int32_t *t=a;
@@ -82,11 +82,36 @@ bool ssd1306_init(ssd1306_t *p, uint16_t width, uint16_t height, uint8_t address
     ++(p->buffer);
 
     if (p->is_sh1106) {
-        // from https://github.com/sztvka/pico-sh1106-c
+        // from https://github.com/adafruit/Adafruit_SH110x/blob/master/Adafruit_SH1106G.cpp
         uint8_t cmds[]= {
+            SET_DISP,
+            // timing and driving scheme
+            SET_DISP_CLK_DIV,
+            0x80,
+            SET_MUX_RATIO,
+            height - 1,
+            SET_DISP_OFFSET,
+            0x00,
+            // resolution and layout
+            SET_DISP_START_LINE,
+            SET_SH1106_DCDC,
+            0x8B,
+            SET_SEG_REMAP | 0x01,           // column addr 127 mapped to SEG0
+            SET_SH1106_COMSCANDEC,
+            SET_COM_PIN_CFG,
+            width>2*height?0x02:0x12,
+            SET_CONTRAST,
+            0xFF,
+            SET_PRECHARGE,
+            0x1F,
+            SET_VCOM_DESEL,
+            0x40,
+            0x33, // Set VPP to 9V
+            SET_SH1106_NORMALDISPLAY,
+            SET_MEM_ADDR,
+            0x10,
+            SET_SH1106_DISPLAYALLON_RESUME,
             SET_DISP | 0x01,
-            SET_SEG_REMAP | 0x01,   // Flip left-right
-            SET_COM_OUT_DIR | 0x08, // Flip top-bottom
         };
 
         for(size_t i=0; i<sizeof(cmds); ++i)
@@ -320,9 +345,9 @@ void ssd1306_show(ssd1306_t *p) {
     if (p->is_sh1106) {
         for (uint8_t page = 0; page < p->pages; page++) {
             uint8_t payload[]= {
-                0xB0 | page, // SET_PAGE_ADDR
-                0x00 | 0x02, // LOW_COL_ADDR
-                0x10 | 0x00, // HIGH_COL_ADDR
+                SET_SH1106_PAGE_ADDR | page,
+                SET_SH1106_LOW_COL_ADDR | 0x02,
+                SET_SH1106_HIGH_COL_ADDR | 0x00,
             };
             for(size_t i=0; i<sizeof(payload); ++i)
                 ssd1306_write(p, payload[i]);
