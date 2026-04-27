@@ -33,6 +33,9 @@ SOFTWARE.
 #include "ssd1306.h"
 #include "font.h"
 
+// Use initialization values from adafruit library
+#define USE_ADAFRUIT_CFG
+
 inline static void swap(int32_t *a, int32_t *b) {
     int32_t *t=a;
     *a=*b;
@@ -54,7 +57,10 @@ inline static void fancy_write(i2c_inst_t *i2c, uint8_t addr, const uint8_t *src
 }
 
 inline static void ssd1306_write(ssd1306_t *p, uint8_t val) {
-    uint8_t d[2]= {0x00, val};
+    uint8_t d[2] = {
+        p->is_sh1106 ? 0x80 : 0x00,
+        val
+    };
     fancy_write(p->i2c_i, p->address, d, 2, "ssd1306_write");
 }
 
@@ -75,42 +81,62 @@ bool ssd1306_init(ssd1306_t *p, uint16_t width, uint16_t height, uint8_t address
 
     ++(p->buffer);
 
-    // from https://github.com/makerportal/rpi-pico-ssd1306
-    uint8_t cmds[]= {
-        SET_DISP,
-        // timing and driving scheme
-        SET_DISP_CLK_DIV,
-        0x80,
-        SET_MUX_RATIO,
-        height - 1,
-        SET_DISP_OFFSET,
-        0x00,
-        // resolution and layout
-        SET_DISP_START_LINE,
-        // charge pump
-        SET_CHARGE_PUMP,
-        p->external_vcc?0x10:0x14,
-        SET_SEG_REMAP | 0x01,           // column addr 127 mapped to SEG0
-        SET_COM_OUT_DIR | 0x08,         // scan from COM[N] to COM0
-        SET_COM_PIN_CFG,
-        width>2*height?0x02:0x12,
-        // display
-        SET_CONTRAST,
-        0xff,
-        SET_PRECHARGE,
-        p->external_vcc?0x22:0xF1,
-        SET_VCOM_DESEL,
-        0x30,                           // or 0x40?
-        SET_ENTIRE_ON,                  // output follows RAM contents
-        SET_NORM_INV,                   // not inverted
-        SET_DISP | 0x01,
-        // address setting
-        SET_MEM_ADDR,
-        0x00,  // horizontal
-    };
+    if (p->is_sh1106) {
+        // from https://github.com/sztvka/pico-sh1106-c
+        uint8_t cmds[]= {
+            SET_DISP | 0x01,
+            SET_SEG_REMAP | 0x01,   // Flip left-right
+            SET_COM_OUT_DIR | 0x08, // Flip top-bottom
+        };
 
-    for(size_t i=0; i<sizeof(cmds); ++i)
-        ssd1306_write(p, cmds[i]);
+        for(size_t i=0; i<sizeof(cmds); ++i)
+            ssd1306_write(p, cmds[i]);
+    } else {
+        // from https://github.com/makerportal/rpi-pico-ssd1306
+        uint8_t cmds[]= {
+            SET_DISP,
+            // timing and driving scheme
+            SET_DISP_CLK_DIV,
+            0x80,
+            SET_MUX_RATIO,
+            height - 1,
+            SET_DISP_OFFSET,
+            0x00,
+            // resolution and layout
+            SET_DISP_START_LINE,
+            // charge pump
+            SET_CHARGE_PUMP,
+            p->external_vcc?0x10:0x14,
+            SET_SEG_REMAP | 0x01,           // column addr 127 mapped to SEG0
+            SET_COM_OUT_DIR | 0x08,         // scan from COM[N] to COM0
+            SET_COM_PIN_CFG,
+            width>2*height?0x02:0x12,
+            // display
+            SET_CONTRAST,
+#ifdef USE_ADAFRUIT_CFG
+            0xCF, // From https://github.com/adafruit/Adafruit_SSD1306/blob/master/Adafruit_SSD1306.cpp#L598
+#else
+            0xff,
+#endif
+            SET_PRECHARGE,
+            p->external_vcc?0x22:0xF1,
+            SET_VCOM_DESEL,
+#ifdef USE_ADAFRUIT_CFG
+            0x40, // From https://github.com/adafruit/Adafruit_SSD1306/blob/master/Adafruit_SSD1306.cpp#L618
+#else
+            0x30,                           // or 0x40?
+#endif
+            SET_ENTIRE_ON,                  // output follows RAM contents
+            SET_NORM_INV,                   // not inverted
+            SET_DISP | 0x01,
+            // address setting
+            SET_MEM_ADDR,
+            0x00,  // horizontal
+        };
+
+        for(size_t i=0; i<sizeof(cmds); ++i)
+            ssd1306_write(p, cmds[i]);
+    }
 
     return true;
 }
@@ -291,16 +317,32 @@ inline void ssd1306_bmp_show_image(ssd1306_t *p, const uint8_t *data, const long
 }
 
 void ssd1306_show(ssd1306_t *p) {
-    uint8_t payload[]= {SET_COL_ADDR, 0, p->width-1, SET_PAGE_ADDR, 0, p->pages-1};
-    if(p->width==64) {
-        payload[1]+=32;
-        payload[2]+=32;
+    if (p->is_sh1106) {
+        for (uint8_t page = 0; page < p->pages; page++) {
+            uint8_t payload[]= {
+                0xB0 | page, // SET_PAGE_ADDR
+                0x00 | 0x02, // LOW_COL_ADDR
+                0x10 | 0x00, // HIGH_COL_ADDR
+            };
+            for(size_t i=0; i<sizeof(payload); ++i)
+                ssd1306_write(p, payload[i]);
+    
+            p->buffer[page*p->width-1] = 0x40;
+    
+            fancy_write(p->i2c_i, p->address, &p->buffer[page*p->width-1], p->width+1, "ssd1306_show");
+        }
+    } else {
+        uint8_t payload[]= {SET_COL_ADDR, 0, p->width-1, SET_PAGE_ADDR, 0, p->pages-1};
+        if(p->width==64) {
+            payload[1]+=32;
+            payload[2]+=32;
+        }
+    
+        for(size_t i=0; i<sizeof(payload); ++i)
+            ssd1306_write(p, payload[i]);
+    
+        *(p->buffer-1)=0x40;
+    
+        fancy_write(p->i2c_i, p->address, p->buffer-1, p->bufsize+1, "ssd1306_show");
     }
-
-    for(size_t i=0; i<sizeof(payload); ++i)
-        ssd1306_write(p, payload[i]);
-
-    *(p->buffer-1)=0x40;
-
-    fancy_write(p->i2c_i, p->address, p->buffer-1, p->bufsize+1, "ssd1306_show");
 }
