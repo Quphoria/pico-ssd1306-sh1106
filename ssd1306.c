@@ -106,7 +106,8 @@ bool ssd1306_init(ssd1306_t *p, uint16_t width, uint16_t height, uint8_t address
             0x1F,
             SET_VCOM_DESEL,
             0x40,
-            0x33, // Set VPP to 9V
+            0x32, // Set VPP to 8V (default)
+            // 0x33, // Set VPP to 9V
             SET_SH1106_NORMALDISPLAY,
             SET_MEM_ADDR,
             0x10,
